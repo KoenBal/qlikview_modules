@@ -1,0 +1,1163 @@
+﻿///$tab Hidden Script 
+
+/*
+Copyright (C) Koen Bal - All Rights Reserved  
+Unauthorized copying of this file, via any medium is strictly prohibited  
+Proprietary and confidential  
+Written by Koen Bal <koen.bal@gmail.com>, May 2019  
+*/
+
+LET vPackage = 'Developer Modules, Business User Modules';
+
+////Set timer for the trial version
+//LET vDemo_EndDate = Num(MakeDate(2017,07,20));
+//IF Num(Today()) > vDemo_EndDate THEN
+//	LET vPackage = '';
+//	Exit script;
+//ENDIF
+
+LET vQvM_Dev = '=if(vQvM_Dev_Password=''Dev'', 1, 0)';
+
+//Create the vQvM_Dev_Password variable if it does not yet exist!
+IF len('$(vQvM_Dev_Password)')>0 THEN 
+ELSE
+	LET vQvM_Dev_Password='';
+ENDIF
+
+
+
+
+
+SUB QvM.FieldList
+
+LET vQvm.NoOfTables = NoOfTables() - 1; 	//By setting the number of tables before the loop, the tables [QvM_FieldList1], etc are not created as values in the tables [QvM_FieldList2], etc, 
+										// Only the earlier loaded tables are listed as values in the field [Table name]
+//Create fields for the Dynamic Table
+FOR vQvm.I_table = 0 TO $(vQvm.NoOfTables)
+	LET vQvm.Tablename = TableName(vQvm.I_table);
+	
+	IF NOT WildMatch('$(vQvm.Tablename)', 'DDM_*', 'KeyCheck_*','QvM_*', 'AdHocTable*', 'BusinessUserHelp', 'Qvc.*', 'Sample Customers', 'Sample Orders') THEN 	
+		
+		FOR vQvm.I_field = 1 to NoOfFields('$(vQvm.Tablename)')	
+			LET vQvm.Fieldname = FieldName(vQvm.I_field ,'$(vQvm.Tablename)');
+			
+			[QvM_FieldList]:
+			LOAD * INLINE [
+	   				$Field name 		,$Table name 			,$Field number 			,$Table number			,$Field|Table name  					,$Field|Table number  
+	    			'$(vQvm.Fieldname)' 	,'$(vQvm.Tablename)' 	,'$(vQvm.I_field)' 		,'$(vQvm.I_table)'		,'$(vQvm.Fieldname)|$(vQvm.Tablename)'	,'$(vQvm.I_field)|$(vQvm.I_table)'
+								];
+		NEXT
+		
+	ENDIF
+	
+	CALL QvM.Hide('QvM_FieldList');
+	
+NEXT
+
+//Set variables
+SET vQvm.I_table =;
+SET vQvm.Tablename =;
+SET vQvm.I_field =;
+SET vQvm.Fieldname =;
+SET vQvm.NoOfTables =;
+
+END SUB	//End of sub QvM.FieldList
+
+
+
+
+
+SUB QvM.AdvancedDataDiscovery
+IF if( substringcount('$(vPackage)', 'Developer Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+//Test if the table [QvM_FieldList] already exists
+IF TableNumber('QvM_FieldList') > -1 THEN
+	//QvM_FieldList already exists, do nothing.
+ELSE
+	//Create the QvM_FieldList table
+	CALL QvM.FieldList
+END IF
+
+//Create multiple QvM_FieldLists, which will be used to create listboxes to choose for which fields you want to see statistics
+FOR vQvM.I_Field_list = 1 to 5
+	[QvM_FieldList $(vQvM.I_Field_list)]:
+	LOAD
+		[$Field name]			as [$Field name $(vQvM.I_Field_list)],
+		[$Field number]			as [$Field number $(vQvM.I_Field_list)],
+		[$Table name]			as [$Table name $(vQvM.I_Field_list)],
+		[$Table number]			as [$Table number $(vQvM.I_Field_list)],
+		//[$Table|Field name]		as [%Table|Field name $(vQvM.I_Field_list)],			
+		[$Field|Table name]		as [%Field|Table name $(vQvM.I_Field_list)]		//System fields with a $ can't be searched! , This order is preferred in the search
+		//[$Table|Field number]	as [$Table|Field number $(vQvM.I_Field_list)]
+	Resident [QvM_FieldList];
+	
+	CALL QvM.Hide('QvM_FieldList $(vQvM.I_Field_list)');
+	
+NEXT
+SET vQvM.I_Field_list=;	
+
+[QvM_MeasureList]:
+Load 
+ RecNo() as [$QvM_Measure number]
+autogenerate 5;
+
+CALL QvM.Hide('QvM_MeasureList');
+
+[QvM_SelectionSetToggle]:
+Load * inline [
+	$QvM_SelectionSetToggle
+	Complete set
+	Current selections
+				];
+
+CALL QvM.Hide('QvM_SelectionSetToggle');
+
+//Set variables
+LET vQvM.SetAnalysisRecordCount= '{$' & '(=if($QvM_SelectionSetToggle=''Complete set'',''1'',''$''))}';
+LET vQvM.DT_Dimension='[$' & '(= only(
+						{$< 
+							[$Field|Table number]= {''$' & '(=subfield( Concat([$Field|Table number],''_'')&''_'', ''_'', $1))''} 		
+						>} 			
+						[$Field name] 
+							)
+						)]';
+LET vQvM.#DTDimensions='=GetSelectedCount([$Field|Table name])';
+LET vQvM.Set='Complete set';
+
+IF len('$(vQvM.ShowHideFieldList2)')>0 THEN 
+//If the variable is already set don't do anything and leave the setup as is
+ELSE
+	SET vQvM.ShowHideFieldList1=0;
+	SET vQvM.ShowHideFieldList2=0;
+	SET vQvM.ShowHideFieldList3=0;
+	SET vQvM.ShowHideFieldList4=0;
+
+	SET vQvM.ShowHideDetails1=0;
+	SET vQvM.ShowHideDetails2=0;
+	SET vQvM.ShowHideDetails3=0;
+	SET vQvM.ShowHideDetails4=0;
+
+	SET vQvM.ShowHideDynamicTable=0;
+ENDIF
+
+IF len('$(vQvM.MeasureLabel1)')>0 THEN 
+//If the variable is already set don't overwrite
+ELSE
+	LET vQvM.MeasureLabel1 ='';
+	LET vQvM.MeasureLabel2 ='';
+	LET vQvM.MeasureLabel3 ='';
+	LET vQvM.MeasureLabel4 ='';
+	LET vQvM.MeasureLabel5 ='';
+	LET eQvM.Measure1      ='';
+	LET eQvM.Measure2      ='';
+	LET eQvM.Measure3      ='';
+	LET eQvM.Measure4      ='';
+	LET eQvM.Measure5      ='';
+ENDIF
+
+
+//Remark: The Let statement is different from the Set statement in that you must use single quotes as delimiter for literals. 
+//So you need to use an escape sequence instead: Just write the single quote twice, 
+//and the two characters will not be interpreted as a string delimiter, but instead as a single instance of the character itself.
+
+ELSE 																		
+	CALL QvM.TriggerError('Advanced Data Discovery module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB	//End of QvM.AdvancedDataDiscovery
+
+
+
+
+
+SUB QvM.DynamicDataModel
+IF if( substringcount('$(vPackage)', 'Developer Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+//Test if the table [QvM_FieldList] already exists
+IF TableNumber('QvM_FieldList') > -1 THEN
+	//QvM_FieldList already exists, do nothing.
+ELSE
+	//Create the QvM_FieldList table
+	CALL QvM.FieldList
+END IF
+
+
+DDM_Table:
+LOAD
+	[$Table name]					as [$DDM_TableNames],
+	[$Field name]					as [$DDM_FieldNames],
+	NoOfFields([$Table name])		as [$DDM_#Fields],
+	NoOfRows([$Table name])		as [$DDM_#Rows]
+Resident [QvM_FieldList];
+
+CALL QvM.Hide('DDM_Table');
+
+//Create multiple DDM_FieldLists, which will be used to create listboxes
+FOR vDDM.I_Field_list = 1 to 5
+	[DDM_FieldList $(vDDM.I_Field_list)]:
+	LOAD
+		[$DDM_TableNames]				as [$DDM_TableNames$(vDDM.I_Field_list)],
+		[$DDM_FieldNames]				as [$DDM_FieldNames$(vDDM.I_Field_list)]
+	Resident DDM_Table;
+	CALL QvM.Hide('DDM_FieldList $(vDDM.I_Field_list)');
+NEXT
+SET vDDM.I_Field_list=;
+
+
+//Set input variables if they do not yet exist
+IF len('$(vDDM_Table1)')>0 THEN 
+ELSE
+	LET vDDM_Table1='';
+	LET vDDM_DistinctRecordIdName_Table1='';
+	LET vDDM_Keys_Table1='';
+ENDIF
+
+IF len('$(vDDM_Table2)')>0 THEN 
+ELSE
+	LET vDDM_Table2='';
+	LET vDDM_DistinctRecordIdName_Table2='';
+	LET vDDM_Keys_Table2='';
+ENDIF
+
+IF len('$(vDDM_Table3)')>0 THEN 
+ELSE
+	LET vDDM_Table3='';
+	LET vDDM_DistinctRecordIdName_Table3='';
+	LET vDDM_Keys_Table3='';
+ENDIF
+
+IF len('$(vDDM_Table4)')>0 THEN 
+ELSE
+	LET vDDM_Table4='';
+	LET vDDM_DistinctRecordIdName_Table4='';
+	LET vDDM_Keys_Table4='';
+ENDIF
+
+IF len('$(vDDM_Table5)')>0 THEN 
+ELSE
+	LET vDDM_Table5='';
+	LET vDDM_DistinctRecordIdName_Table5='';
+	LET vDDM_Keys_Table5='';
+ENDIF
+
+
+//Create working variables for the DDM module if they do not yet exist
+IF len('$(vDDM_KeyName)')>0 THEN 
+//Don' create variables as they already exist
+ELSE
+	LET vDDM_KeyNames =
+	'=
+	''|||''&vDDM_Table1&''|||''&vDDM_Keys_Table1
+	&''|||''&vDDM_Table2&''|||''&vDDM_Keys_Table2
+	&''|||''&vDDM_Table3&''|||''&vDDM_Keys_Table3
+	&''|||''&vDDM_Table4&''|||''&vDDM_Keys_Table4
+	&''|||''&vDDM_Table5&''|||''&vDDM_Keys_Table5
+	&''|||''
+	';
+
+	LET vDDM_DistinctRecordIdNames =
+	'=
+	''|||''&vDDM_Table1&''|||''&vDDM_DistinctRecordIdName_Table1
+	&''|||''&vDDM_Table2&''|||''&vDDM_DistinctRecordIdName_Table2
+	&''|||''&vDDM_Table3&''|||''&vDDM_DistinctRecordIdName_Table3
+	&''|||''&vDDM_Table4&''|||''&vDDM_DistinctRecordIdName_Table4
+	&''|||''&vDDM_Table5&''|||''&vDDM_DistinctRecordIdName_Table5
+	&''|||''
+	';
+
+	LET vDDM_KeyName				  =  '';
+	LET vDDM_#RowsInTable             =  '';
+	LET vDDM_#FieldsInTable           =  '';
+	LET vDDM_DistinctRecordId_Count$  =  '';
+	LET vDDM_DistinctRecordId_Count1  =  '';
+	LET vDDM_MultiBoxCaption          =  '';
+	LET vDDM_MultiBoxHelp             =  '';
+	LET vDDM_ShowHideFieldsShownInDDM =  0;
+	LET vDDM_TableNamesX              =  '';
+	LET vDDM_FieldNamesX              =  '';
+	LET vDDM_TableNameTableX          =  '';
+	LET vDDM_FieldNameTableXFieldY    =  '';
+	LET vDDM_FieldNamesTableX         =  '';
+	LET vDDM_FieldValues              =  '';
+	LET vDDM_DistinctRecordIdName     =  '';
+	LET vDDM_DistinctRecordIdValues   =  '';
+
+ENDIF
+
+ELSE 																		
+	CALL QvM.TriggerError('Dynamic data module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB //End of sub QvM.DynamicDataModel
+
+
+
+
+
+SUB QvM.KeyCheck(ptable_1, ptable_2, pKey)
+IF if( substringcount('$(vPackage)', 'Developer Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+//Create the comparison table this table will hold all the values of the key field 
+//and a SourceMarker which indicates from which table the values originate.
+
+[Map_sourcemarker_to_source_indicator_$(pKey)_$(ptable_1)_$(ptable_2)]:
+Mapping LOAD * INLINE [
+    sourcemarker, source_indicator
+    1, 'Only in table $(ptable_1)'				
+    2, 'Only in table $(ptable_2)'
+    3, 'In both $(ptable_1) and $(ptable_2)'
+];										
+
+//Load the Keys from the 2 tables and concatenate them in one table
+//Load the column of the first table
+[Two columns concatenated]:
+LOAD Distinct 
+     [$(pKey)],									
+     1				as sourcemarker
+Resident $(ptable_1);						// Load the key field from table 1				
+
+//Load the column of second table
+Concatenate([Two columns concatenated])
+LOAD Distinct
+	[$(pKey)],
+	 2 				as sourcemarker
+Resident $(ptable_2);						// Load the key field from table 2	
+
+
+[KeyCheck_$(pKey)_$(ptable_1)_$(ptable_2)]:
+Noconcatenate					
+Load
+[$(pKey)],
+applymap('Map_sourcemarker_to_source_indicator_$(pKey)_$(ptable_1)_$(ptable_2)',sum(sourcemarker) ) 		as [$KeyCheck_$(pKey)_$(ptable_1)_$(ptable_2)_SourceMarker]
+Resident [Two columns concatenated] 
+group by [$(pKey)];						
+
+Drop table [Two columns concatenated];
+
+//CALL QvM.Hide('$KeyCheck_$(pKey)_$(ptable_1)_$(ptable_2)_SourceMarker');		//Part of datamodel, it can be confusing if it does not show up in the current selections!
+
+[QvM_KeyFields]:
+LOAD
+	'$(pKey)'													as [$KeyCheck Key field],
+	'$KeyCheck_$(pKey)_$(ptable_1)_$(ptable_2)_SourceMarker'	as [$KeyCheck Key field SourceMarker],
+	'$(ptable_1)'												as [$KeyCheck Table 1],
+	'$(ptable_2)'												as [$KeyCheck Table 2]
+AutoGenerate(1);
+
+CALL QvM.Hide('QvM_KeyFields');
+
+LET pKey=;
+LET ptable_1=;
+LET ptable_2=;
+
+
+ELSE 																		
+	CALL QvM.TriggerError(' Key chek module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB //End of SUB QvM.KeyCheck
+	
+
+
+
+	
+SUB QvM.StoreAllTables(FolderPath)
+//SUB Store All Tables
+//Goal of SUB: Store all the tables of the current datamodel in the specified folder
+//Input: FolderPath = a string value containing the path to the folder where the qvds should be stored
+
+	FOR I = 0 TO NoOfTables() - 1
+		LET vT = TableName($(I));
+		STORE [$(vT)] INTO [$(FolderPath)$(vT).qvd];
+	NEXT
+	SET I=;
+	SET vT=;
+
+END SUB
+
+
+
+SUB QvM.StoreDropAllTables(FolderPath)
+//SUB Store and Drop All Tables
+//Goal of SUB: Store all the tables of the current datamodel in the specified folder and subsequently drop all the tables
+//Input: FolderPath = a string value containing the path to the folder where the qvds should be stored
+
+	FOR I = 0 TO NoOfTables() - 1
+		LET vT = TableName(0);
+		STORE [$(vT)] INTO [$(FolderPath)$(vT).qvd];
+		DROP TABLE [$(vT)];
+	NEXT
+	SET I=;
+	SET vT=;
+	
+END SUB
+
+
+
+SUB QvM.LoadAllTables(FolderPath)
+//SUB Load All Tables
+//Goal of SUB: Load all the qvds that are found in a specified folder
+//Input: FolderPath = a string value containing the path to the folder where the qvds can be found
+
+	FOR each vFoundFile in filelist('$(FolderPath)*.qvd' )
+		QVD:
+		LOAD
+			Left(SubField('$(vFoundFile)','\',-1),Len(SubField('$(vFoundFile)','\',-1)) - 4) AS Qvd
+		AUTOGENERATE 1;
+	NEXT
+	
+	FOR i = 0 TO NoOfRows('QVD')-1
+		LET vQvd = Peek('Qvd',$(i),'QVD');
+		[$(vQvd)]:
+		LOAD
+			*
+		FROM 
+			[$(FolderPath)$(vQvd).QVD] (qvd);
+	NEXT
+	
+	DROP TABLE QVD;
+	SET vFoundFile=;
+	SET i=;
+	SET vQvd=;
+	
+END SUB
+
+
+
+
+
+SUB QvM.Hide (QvM.TableOrField)  
+
+/** 
+* Ex. CALL QvM.Hide('<TableName>') or CALL QvM.Hide('<FieldName>')
+* @Description Subfunction QvM.Hide will add the tag $hidden to the given field or each field within the given table. 
+* after that this fields will only be visible when "show system fields" is checked. 
+* @Version 1.0 
+**/  
+    
+	IF If(TableNumber('$(QvM.TableOrField)') >= 0, 1, 0) THEN	//Test if QvM.TableOrField is a table
+	
+		Trace Hiding fields of table $(QvM.TableOrField);
+		   
+  		for QvM.Temp = 1 to NoOfFields('$(QvM.TableOrField)')  
+  			Let QvM.FieldName = FieldName($(QvM.Temp),'$(QvM.TableOrField)');  
+  			TAG Field [$(QvM.FieldName)] with '$hidden';  
+  			//comment field [$(QvM.FieldName)] with 'Its a hidden field';  
+  		NEXT 
+	
+	ELSE	// QvM.TableOrField is a Field
+		Trace Hiding field $(QvM.TableOrField);
+		
+		TAG Field [$(QvM.TableOrField)] with '$hidden';  
+		
+	ENDIF
+
+	SET QvM.Temp =;
+	SET QvM.FieldName=;
+	SET QvM.TableOrField=;
+  
+ENDSUB //End Subfunction QvM.Hide 
+
+
+
+
+
+SUB QvM.Generate_vYYYYMM_List(pYYYYMM_Min, pYYYYMM_Max, pYYYYMM_List)
+	
+    Let pYYYYMM_Min_YYYY = left($(pYYYYMM_Min),4);
+    Let pYYYYMM_Min_MM = right($(pYYYYMM_Min),2);
+    Let pYYYYMM_Max_YYYY = left($(pYYYYMM_Max),4);
+    Let pYYYYMM_Max_MM = right($(pYYYYMM_Max),2);
+    Let vYYYYMMList= 'X';
+    
+    for jYYYY = $(pYYYYMM_Min_YYYY) to $(pYYYYMM_Max_YYYY)
+      
+      //First year = Last year
+      IF '$(jYYYY)' = '$(pYYYYMM_Min_YYYY)' AND '$(pYYYYMM_Min_YYYY)' = '$(pYYYYMM_Max_YYYY)'  THEN
+        
+        for jMM = $(pYYYYMM_Min_MM) to $(pYYYYMM_Max_MM)
+          Let vYYYYMMList = '$(vYYYYMMList)' &','& $(jYYYY) & Num($(jMM),'00,', ',', '.');
+        next jMM
+        Let jMM=;
+       
+      //First year only
+      ELSEIF '$(jYYYY)' = '$(pYYYYMM_Min_YYYY)'  THEN
+      
+      	for jMM = $(pYYYYMM_Min_MM) to 12
+          Let vYYYYMMList = '$(vYYYYMMList)' &','& $(jYYYY) & Num($(jMM),'00,', ',', '.');
+        next jMM
+        Let jMM=;
+      
+      //Last year only
+      ELSEIF '$(jYYYY)' = '$(pYYYYMM_Max_YYYY)' THEN
+      
+      	for jMM = 1 to $(pYYYYMM_Max_MM)
+          Let vYYYYMMList = '$(vYYYYMMList)' &','& $(jYYYY) & Num($(jMM),'00,', ',', '.');
+        next jMM
+        Let jMM=;
+      
+      //inbetween years
+      ELSEIF NOT '$(jYYYY)' = '$(pYYYYMM_Min_YYYY)' AND NOT 'jYYYY' = '$(pYYYYMM_Max_YYYY)'   THEN
+      
+      	for jMM = 1 to 12
+          Let vYYYYMMList = '$(vYYYYMMList)' &','& $(jYYYY) & Num($(jMM),'00,', ',', '.');
+        next jMM
+        Let jMM=;
+      
+      ENDIF
+      
+    next jYYYY
+    
+    
+    LET $(pYYYYMM_List) = subfield('$(vYYYYMMList)', 'X,',2);
+    Let pYYYYMM_Min_YYYY =;
+    Let pYYYYMM_Min_MM =;
+    Let pYYYYMM_Max_YYYY =;
+    Let pYYYYMM_Max_MM =;
+    Let vYYYYMMList =;
+    Let jYYYY=;
+    Let jMM=;
+	
+END SUB	//End subfunction Generate_vYYYYMM_List
+
+
+
+
+
+SUB QvM.LastQVD(pMask, pSubstringBeforePeriod, pSubstringAfterPeriod, pPeriodType, pLastQVD, pLastPeriod)
+// CALL LastQVD('$(vDomein_ContactenPersonas)Contacten_*.qvd', 'ten_', '.qvd', 'YYYYMM', 'vLastContactenQVD', 'vYYYYMM_Max')
+//Other pPeriodTypes: YYYYMM, YYYYQQ, YYYY
+
+SET I_Period_max = '000000';
+SET I_FoundFilePath_max = 'No path was generated by the LastQVD call';
+	
+FOR each vFoundFilePath in filelist (pMask)
+	LET vFoundFile = subfield('$(vFoundFilePath)' , '\', -1);
+	LET I_Period = textbetween( '$(vFoundFile)', pSubstringBeforePeriod, pSubstringAfterPeriod);
+	IF pPeriodType ='YYYYMM' AND IsNum($(I_Period)) AND len($(I_Period))=6 THEN		//Test if vPeriod is YYYYMM, First option rules out YYYYQQ and second option rules out YYYY					
+		
+		LET I_FoundFilePath_max = if( num($(I_Period)) > num($(I_Period_max)) , '$(vFoundFilePath)' , '$(I_FoundFilePath_max)' );
+		LET I_Period_max = if( num($(I_Period)) > num($(I_Period_max)) , $(I_Period) , $(I_Period_max) );
+									
+	ELSEIF pPeriodType ='YYYYQQ' AND NOT IsNum($(I_Period)) AND len($(I_Period))=6 THEN			
+		
+		LET I_FoundFilePath_max = if( num(PurgeChar($(I_Period),'Qq')) > num(PurgeChar($(I_Period_max),'Qq')) , $(vFoundFilePath) , $(I_FoundFilePath_max) );
+		LET I_Period_max = if( num(PurgeChar($(I_Period),'Qq')) > num(PurgeChar($(I_Period_max),'Qq')) , $(I_Period) , $(I_Period_max) );
+		
+	ELSEIF pPeriodType ='YYYY' AND IsNum($(I_Period)) AND len($(I_Period))=4 THEN
+		
+		LET I_FoundFilePath_max = if( num($(I_Period)) > num($(I_Period_max)) , $(vFoundFilePath) , $(I_FoundFilePath_max) );
+		LET I_Period_max = if( num($(I_Period)) > num($(I_Period_max)) , $(I_Period) , $(I_Period_max) );
+		
+	ENDIF	
+		LET vFoundFilePath=;
+		LET vFoundFile =;
+		LET I_Period =;	
+NEXT
+LET $(pLastQVD) = '$(I_FoundFilePath_max)';
+LET $(pLastPeriod) = $(I_Period_max);
+
+SET I_FoundFilePath_max=;
+SET I_Period_max=;	
+
+END SUB //End SUB LastQVD
+
+
+
+
+
+SUB QvM.Documentation
+/*
+Create the tables for the developer documentation which is available on a seperate tab.
+Meta data is loaded from the QVMeta_Dashboard xlsx
+
+*/
+
+LET vDocumentName = left(DocumentName(), Len(DocumentName())-4);
+
+//Load Field and Meta data
+FieldMeta:
+LOAD Table		as [Table name], 
+     Field		as [Field name], 
+     [Field description]
+FROM
+[..\6_Documentation\QVMeta_Dashboard_$(vDocumentName).xlsx]
+(ooxml, embedded labels, table is FieldMeta);
+
+TableMeta:
+LOAD [Table name], 
+     [Table description] 
+     //[Table Key fields]
+FROM
+[..\6_Documentation\QVMeta_Dashboard_$(vDocumentName).xlsx]
+(ooxml, embedded labels, table is TableMeta);
+
+AppMeta:
+First(1)
+LOAD 
+     [File description] 
+FROM
+[..\6_Documentation\QVMeta_Dashboard_$(vDocumentName).xlsx]
+(ooxml, embedded labels, table is FileMeta);
+
+SheetMeta:
+LOAD [Sheet ID], 
+     [Sheet description] 
+FROM
+[..\6_Documentation\QVMeta_Dashboard_$(vDocumentName).xlsx]
+(ooxml, embedded labels, table is SheetMeta);
+
+ChartMeta:
+LOAD [Sheet ID], 
+     [Chart ID],
+     [Chart description] 
+FROM
+[..\6_Documentation\QVMeta_Dashboard_$(vDocumentName).xlsx]
+(ooxml, embedded labels, table is ChartMeta);
+
+
+//Add field descriptions using field comments
+FieldMetaMap:
+Mapping
+LOAD
+     [Field name], 
+     [Field description]
+Resident FieldMeta;
+
+Comment Fields using FieldMetaMap;
+
+//Add table descriptions using table comments
+TableMetaMap:
+Mapping
+LOAD
+     [Table name], 
+     [Table description]
+Resident TableMeta;
+
+Comment tables using TableMetaMap;
+
+END SUB		//END SUB QvM.Documentation
+
+
+
+
+
+SUB QvM.BusinessUserHelp(pQVMeta_DashboardPath)
+IF if( substringcount('$(vPackage)', 'Business User Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+//Create the table that contains the meta data for the info panel.
+
+LET QvM.Documentname = left(DocumentName(), Len(DocumentName())-4);
+
+//Add Dimensions
+BusinessUserHelp:
+LOAD Distinct 
+	 'Dimension'			as AppPartType, 
+     Field					as AppPart, 
+     [Field description]	as [AppPartDescription]
+     //[Used in frontend]
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is FieldMeta)
+where [ShowInBusinessUserHelp]=1 ;
+
+//Add Expressions/Performance Indicators
+Concatenate(BusinessUserHelp)
+LOAD Distinct
+	 'Performance Indicator'	as AppPartType, 
+	 [Expression name]			as AppPart, 
+     //[Expression variable], 
+     //[Expression formula], 
+     [Expression description]	as [AppPartDescription]
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is ExpressionMeta)
+where [ShowInBusinessUserHelp]=1;
+
+//Add charts
+Concatenate(BusinessUserHelp)
+LOAD  
+	 'Chart'					as AppPartType,
+     [Chart ID]					as AppPart, 
+     [Chart description]		as [AppPartDescription]
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is ChartMeta)
+where Not IsNull([Chart description])
+and [ShowInBusinessUserHelp]=1;
+
+//Add app
+Concatenate(BusinessUserHelp)
+LOAD  
+	 'App'						as AppPartType,
+     '$(QvM.Documentname)'			as AppPart, 
+     [File description]			as [AppPartDescription]
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is FileMeta)
+where Not IsNull([File description]);
+
+//Add sheets
+Concatenate(BusinessUserHelp)
+LOAD  
+	 'Page'						as AppPartType,
+     [Sheet ID]					as AppPart, 
+     [Sheet description]		as [AppPartDescription]
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is SheetMeta)
+where Not IsNull([Sheet description])
+and [ShowInBusinessUserHelp]=1;
+
+
+//created concatenated field
+Rename table BusinessUserHelp to BusinessUserHelpTemp;
+BusinessUserHelp:
+LOAD
+	AppPart &'|'& AppPartType as  [AppPart|AppPartType],
+	AppPartType,
+	AppPart,
+	[AppPartDescription]
+Resident BusinessUserHelpTemp;
+
+Drop table BusinessUserHelpTemp;
+Set pQVMeta_DashboardPath=;
+Set QvM.Documentname=;
+
+CALL QvM.Hide('BusinessUserHelp');
+
+ELSE 																		
+	CALL QvM.TriggerError(' Business user help module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB		//End SUB QvM.BusinessUserHelp
+
+
+
+
+
+SUB QvM.AdHocTable(pQVMeta_DashboardPath)
+IF if( substringcount('$(vPackage)', 'Business User Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+AdHocTable_Dimensions:
+LOAD 
+	RowNo()																	as AdHocTable_DimensionNr,
+    Field																			as AdHocTable_DimensionName,
+    Field																			as AdHocTable_DimensionLabel,
+    if(IsNull(trim([AdHoc Table Group])),'Other',[AdHoc Table Group])&'||'&Field		as AdHocTable_DimensionGroupName,
+    [Field description]																as AdHocTable_DimensionComment
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is FieldMeta)
+where NOT IsNull([Field])
+and IncludeInAdHocTable=1;
+
+AdHocTable_Expressions:
+LOAD 
+	RowNo()																				as AdHocTable_ExpressionNr,	 
+	[Expression name]																		as AdHocTable_ExpressionLabel,
+	if(IsNull(trim([AdHoc Table Group])),'Other',[AdHoc Table Group])&'||'&[Expression name]	as AdHocTable_ExpressionGroupLabel, 
+    [Expression formula]																		as AdHocTable_ExpressionFormula,		//Use formula or variable? If variables are used formulas should be assigned to variables, not necessarily!
+    [Expression description]																	as AdHocTable_ExpressionComment
+FROM
+[$(pQVMeta_DashboardPath)]
+(ooxml, embedded labels, table is ExpressionMeta)
+where NOT IsNull([Expression name])
+and IncludeInAdHocTable=1;
+
+CALL QvM.Hide('AdHocTable_Dimensions');
+CALL QvM.Hide('AdHocTable_Expressions');
+
+Set pQVMeta_DashboardPath=;
+
+//SET vAdHocTable#CustomExpressions = '=if( len(vAdHocTableCustomExprLabel1 & vAdHocTableCustomExprLabel2 & vAdHocTableCustomExprLabel3 )=0, 0, 1)' ;
+//SET vAdHocTable#CustomDimensions = '=if( len(vAdHocTableCustomDimLabel1 & vAdHocTableCustomDimLabel2 & vAdHocTableCustomDimLabel3 )=0, 0, 1)';
+//SET vAdHocTable#Dimensions = '=GetSelectedCount(AdHocTable_DimensionName)' ;
+//LET vAdHocTableDimension = '[$' & '(= only(
+//										{$< 
+//										AdHocTable_DimensionNr= {''$' & '(=subfield( Concat(AdHocTable_DimensionNr,''_'')' & Chr(38) & '''_'', ''_'', $1))''} 		
+//										>} 			
+//									AdHocTable_DimensionName
+//										)
+//								)]';
+//								
+//SET vAdHocTableDimensionLabel= 'only(
+//								{$< 
+//									AdHocTable_DimensionNr= {''$'&'(=subfield( Concat(AdHocTable_DimensionNr,''_'')'&Chr(38)&'''_'', ''_'', $1))''} 		
+//								>} 			
+//								AdHocTable_DimensionLabel
+//								)';
+//								
+//SET vAdHocTable#Expressions='=GetSelectedCount(AdHocTable_ExpressionLabel)';
+//
+//SET vAdHocTableExpressionLabel= 'only(
+//		{$< 
+//			AdHocTable_ExpressionNr= {''$'&'(=subfield( Concat(AdHocTable_ExpressionNr,''_'')'&Chr(38)&'''_'', ''_'', $1))''} 		
+//		>} 			
+//		AdHocTable_ExpressionLabel
+//			)';
+//			
+//SET vAdHocTableExpressionFormula= 'only(
+//		{$< 
+//			AdHocTable_ExpressionNr= {''$'&'(=subfield( Concat(AdHocTable_ExpressionNr,''_'')'&Chr(38)&'''_'', ''_'', $1))''} 		
+//		>} 			
+//		AdHocTable_ExpressionFormula
+//			)';
+//
+//SET vAdHocTableExpressionComment= 'only(
+//		{$< 
+//			AdHocTable_ExpressionNr= {''$'&'(=subfield( Concat(AdHocTable_ExpressionNr,''_'')'&Chr(38)&'''_'', ''_'', $1))''} 		
+//		>} 			
+//		AdHocTable_ExpressionComment
+//			)';
+//SET vAdHocTableShowHide = 1;
+
+ELSE 																		
+	CALL QvM.TriggerError('AdHoc table module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB
+
+
+
+
+
+SUB QvM.KPI(pNumberOfKPIs)
+IF if( substringcount('$(vPackage)', 'Business User Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+// Loop to create the variables needed for the KPI's
+For vKPI_Nbr=1 to pNumberOfKPIs
+
+	IF len('$(vQvM.KPI$(vKPI_Nbr).Expression)')>0 THEN 
+	//If the variable is already set don't do anything and leave the setup as is
+	ELSE
+		SET vQvM.KPI$(vKPI_Nbr).Description='';
+		SET vQvM.KPI$(vKPI_Nbr).Expression='';
+		SET vQvM.KPI$(vKPI_Nbr).Unit='';
+		SET vQvM.KPI$(vKPI_Nbr).Target='';
+		SET vQvM.KPI$(vKPI_Nbr).TargetDiff='';
+		SET vQvM.KPI$(vKPI_Nbr).TargetDiff.Threshold='';		
+		SET vQvM.KPI$(vKPI_Nbr).Benchmark.Expression='';
+		SET vQvM.KPI$(vKPI_Nbr).Benchmark.Diff='';
+		SET vQvM.KPI$(vKPI_Nbr).Benchmark.Text='';				
+	ENDIF
+	
+	SET vQvM.KPI$(vKPI_Nbr).Benchmark.Toggle=1;	
+	SET vQvM.KPI$(vKPI_Nbr).TargetDiff.Toggle=1;	
+
+next vKPI_Nbr
+
+SET vQvM.KPI.Indicator.Good	=▲;
+SET vQvM.KPI.Indicator.Neutral =●;
+SET vQvM.KPI.Indicator.Bad =▼;
+SET vQvM.KPI.ObjectNbr = PurgeChar(GetObjectField(0),'=');
+LET vQvM.KPI.Description				=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Description'')';
+LET vQvM.KPI.Expression				=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Expression'')';
+LET vQvM.KPI.Unit						=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Unit'')';
+LET vQvM.KPI.TargetDiff				=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.TargetDiff'')';
+LET vQvM.KPI.TargetDiff.Threshold	=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.TargetDiff.Threshold'')';
+LET vQvM.KPI.TargetDiff.Toggle		=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.TargetDiff.Toggle'')';
+LET vQvM.KPI.Benchmark.Text			=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Benchmark.Text'')';
+LET vQvM.KPI.Benchmark.Diff			=	'$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Benchmark.Diff'')';
+LET vQvM.KPI.Benchmark.Toggle 		=   '$' & '(=''vQvM.KPI'' & $' & '(vQvM.KPI.ObjectNbr) & ''.Benchmark.Toggle'')';		
+
+ELSE
+	//	//Destroy QVM.KPI
+	SET vQvM.KPI.Indicator.Good			=;
+	SET vQvM.KPI.Indicator.Neutral 		=;
+	SET vQvM.KPI.Indicator.Bad 			=;
+	SET vQvM.KPI.ObjectNbr 				=;
+	LET vQvM.KPI.Description				=;
+	LET vQvM.KPI.Expression				=;
+	LET vQvM.KPI.Unit						=;
+	LET vQvM.KPI.TargetDiff				=;
+	LET vQvM.KPI.TargetDiff.Threshold	=;
+	LET vQvM.KPI.Benchmark.Text		=;
+	LET vQvM.KPI.Benchmark.Diff			=; 
+																			
+	CALL QvM.TriggerError('KPI module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB	//End SUB QvM.KPI
+
+
+
+
+
+SUB QvM.Colors(pPathColorsExcel)
+IF if( substringcount('$(vPackage)', 'Business User Modules')>0, 1, 0)=1 THEN		//Test if package is active
+
+	Colors:
+	LOAD 
+	     ColorVariable, 
+	     ColorValue
+	FROM
+	[$(pPathColorsExcel)]
+	(ooxml, embedded labels, table is Sheet1)
+	WHERE len(trim(ColorVariable))>0 
+	and left(trim(ColorVariable),2) <> '//'
+	and left(trim(ColorVariable),4) <> 'Temp'
+	;
+	
+	FOR iColor = 0 to NoOfRows('Colors')-1
+	
+		LET iColorValue = Peek('ColorValue', iColor, 'Colors');
+		LET iColorVariable = Peek('ColorVariable', iColor, 'Colors');
+		LET $(iColorVariable) = $(iColorValue);
+	 
+	NEXT
+	
+	Drop table Colors;
+	
+	SET iColor=;
+	SET iColorVariable=;
+	SET iColorValue=;
+	SET pPathColorsExcel=;
+	
+ELSE 																		
+	CALL QvM.TriggerError('Colors module is not available! Go to QlikViewModules.com to upgrade.')
+END IF	//End package test
+
+END SUB	//End SUB QvM.Colors
+
+
+
+
+
+//CALL QvM.TriggerError('This is a detailed custom error message')	//Don't forget the single quotes!		//Developer Module
+SUB QvM.TriggerError(pErrorMessage)
+
+	SET Manually triggered error: $(pErrorMessage);
+
+END SUB
+
+
+
+
+
+SUB QvM.GetExpressionVariables
+
+//To be adjusted!!
+
+//AdHocTable_Expressions:
+//LOAD 
+//	RowNo()					as AdHocTable_ExpressionNr,	 
+//	[Expression name]			as AdHocTable_ExpressionLabel, 
+//	[Expression variable]		as AdHocTable_ExpressionVariable, 
+//     	[Expression formula]		as AdHocTable_ExpressionFormula,		//Use formula or variable? If variables are used formulas should be assigned to variables, not necessarily!
+//     	[Expression description]		as AdHocTable_ExpressionComment
+//FROM
+//[$(pQVMeta_DashboardPath)]
+//(ooxml, embedded labels, table is ExpressionMeta)
+//where NOT IsNull([Expression name])
+//and IncludeInAdHocTable=1;
+//
+//FOR I = 0 to NoOfRows('AdHocTable_Expressions')-1
+//	
+//		LET iVariable = Peek('AdHocTable_ExpressionVariable', I, 'AdHocTable_Expressions');
+//		LET iFormula = Peek('AdHocTable_ExpressionFormula', I, 'AdHocTable_Expressions');
+//		SET $(iVariable) = $(iFormula);
+//	 
+//NEXT
+//	
+//	SET I=;
+//	SET iFormula=;
+//	SET iVariable=;
+	
+END SUB //GetExpressionVariables
+
+
+
+///$tab Paths
+SUB Paths
+//Create variables that refer to location paths external to the project folder
+
+END SUB
+///$tab MappingTables
+SUB MappingTables
+
+
+END SUB
+///$tab LoadData
+SUB LoadData
+
+Lenders:
+LOAD 
+	[Lender id] as [Lenders|Lender id], 	
+	[Lender id], 
+     [Lender name], 
+     [Lender country code], 
+     [Lender country]
+FROM
+[..\4_QVD\2_Domain_QVD\Kiva-OAF\Lenders.qvd]
+(qvd);
+
+Loans:
+LOAD Key_loans, 
+     [Loan details page], 
+     [Loan id], 
+     [Loan name], 
+     [Loan status], 
+     [Funded amount], 
+     Activity, 
+     Sector, 
+     Use, 
+     [Posted date], 
+     [Planned expiration date], 
+     [Loan amount], 
+     [# borrowers], 
+     [# lenders], 
+     [Funded amount bucket], 
+     [Loan amount bucket], 
+     [# borrowers bucket], 
+     [# lenders bucket]
+FROM
+[..\4_QVD\2_Domain_QVD\Kiva-OAF\Loans.qvd]
+(qvd);
+
+Loans_location:
+LOAD 
+	[Loan country code], 
+     [Loan country], 
+     [Loan town], 
+     Key_loans, 
+     [Geo level], 
+     [Geo pairs]
+FROM
+[..\4_QVD\2_Domain_QVD\Kiva-OAF\Loans_location.qvd]
+(qvd);
+
+LoansLenders:
+LOAD 
+	[Loan id] &'|'& [Lender id]	as [LoansLenders|Loan id|Lender id],
+	[Loan id], 
+      [Lender id]
+FROM
+[..\4_QVD\2_Domain_QVD\Kiva-OAF\LoansLenders.qvd]
+(qvd);
+
+
+END SUB
+///$tab Sample Data
+SUB SampleData
+
+[Sample Customers]:
+LOAD * 
+	,RecNo() as CustomerId
+INLINE  [
+Customer
+Happy Corp
+Best Computers	
+Sell Direct
+Buy Direct
+Acme
+]
+;
+LET vNoCustomers = NoOfRows('Sample Customers');
+
+
+[Sample Orders]:
+LOAD 
+	*
+	,Year(OrderDate) as Year
+;	
+LOAD 
+	date(today()-RecNo()*5) as OrderDate	
+	,Rowno() as OrderId
+	,mod(RecNo(), $(vNoCustomers)) + 1 as CustomerId
+	,round(Rand() * 10000) as Amount
+AUTOGENERATE 100
+;	
+
+SET vNoCustomers=;
+
+END SUB
+///$tab Calendar
+SUB Calendar
+
+// CALL Qvc.CalendarFromField ('Fieldname', ['CalendarTableName'], ['FieldPrefix'], [FirstMonth]);
+CALL Qvc.CalendarFromField ('Posted date', 'Calendar posted date', 'Posted ');
+CALL Qvc.CalendarFromField ('Planned expiration date', 'Calendar planned expiration date', 'Planned expiration ');
+
+END SUB
+///$tab Main
+SET ThousandSep='.';
+SET DecimalSep=',';
+SET MoneyThousandSep='.';
+SET MoneyDecimalSep=',';
+SET MoneyFormat='$#.##0,00;($#.##0,00)';
+SET TimeFormat='hh:mm:ss TT';
+SET DateFormat='DD/MM/YYYY';
+SET TimestampFormat='DD/MM/YYYY hh:mm:ss[.fff] TT';
+SET MonthNames='Jan;Feb;Mar;Apr;May;Jun;Jul;Aug;Sep;Oct;Nov;Dec';
+SET DayNames='Mon;Tue;Wed;Thu;Fri;Sat;Sun';
+SET LongMonthNames='January;February;March;April;May;June;July;August;September;October;November;December';
+SET LongDayNames='Monday;Tuesday;Wednesday;Thursday;Friday;Saturday;Sunday';
+SET FirstWeekDay=0;
+SET BrokenWeeks=0;
+SET ReferenceDay=0;
+SET FirstMonthOfYear=0;
+SET CollationLocale='';
+
+/*
+QlikView Modules
+QvM ver 4.5 - 31/07/2017 for the newest version: www.qlikviewmodules.com
+Created by Koen Bal
+
+The QvM script library is included in the hidden script.
+To receive access to the QvM script library and use the QvM template as your company template. 
+You may contact me at koen.bal@GorillaInsights.com
+
+For bugs or questions please use the Q&A of the corresponding module on QlikViewModules.com
+*/
+
+//Include the Qvc.qvs script library
+$(Must_Include=http://raw.githubusercontent.com/RobWunderlich/Qlikview-Components/master/Qvc_Runtime/Qvc.qvs);
+//$(Must_Include=..\2_resources\1_scripts&subs\qvc.qvs);
+
+
+//CALL QvM.TriggerError('This is a detailed custom error message')	//Don't forget the single quotes!		//Developer Module
+
+	CALL Qvc.Log('Starting script');
+//	SET Qvc.Log.v.WriteLogFile = -1;		// Turn on external logfile writing
+
+CALL SampleData
+CALL QvM.Colors('..\2_Resources\2_ColorScheme\Colors.xlsm')											//Developer Module
+
+CALL Paths
+CALL MappingTables
+
+CALL LoadData
+
+	CALL QvM.StoreDropAllTables('$(vDomainQvds)')	
+	CALL QvM.LoadAllTables('$(vDomainQvds)')	
+
+CALL Calendar
+	//CALL Qvc.Log('SUB Calendar done');
+	//CALL Qvc.TableStats ('TableStats after SUB Calendar');
+
+CALL QvM.BusinessUserHelp('..\6_Documentation\QVMeta_Dashboard_Kiva-OAF.xlsx')					//Business User Module
+
+CALL QvM.AdHocTable('..\6_Documentation\QVMeta_Dashboard_Kiva-OAF.xlsx')						//Business User Module
+
+
+//Create the variables for X KPI objects. 
+CALL QvM.KPI('5');																						//Business User Module
+
+/*
+KeyCheck
+Example: CALL QvM.KeyCheck('TABLE_A', 'TABLE_B', 'KeyFieldName')									// Developer Module
+Note: Omit [] in Table_A, Table_B and KeyFieldName parameters.
+*/
+CALL QvM.KeyCheck('Loans', 'LoansLenders', 'Loan id');
+CALL QvM.KeyCheck('Lenders', 'LoansLenders', 'Lender id');
+
+CALL QvM.DynamicDataModel;																		//Developer Module
+
+CALL QvM.AdvancedDataDiscovery;	//Call at the end of the script after all tables are loaded!			//Developer Module
+
+
+CALL Qvc.Cleanup;
+Drop table Qvc.LogTable;
+
+Exit script;
